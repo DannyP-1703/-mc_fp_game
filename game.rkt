@@ -267,6 +267,24 @@
      ))
 
 
+
+;;--------------------
+;; broom
+;;
+
+(define broom%
+    (class mobile-thing%
+        (init origin)
+        (inherit get-name set-name! install destroy emit get-location creation-site change-location enter-room leave-room)
+        (super-new (name 'broom) (origin origin))
+    )
+)
+
+(define (have-broom? whom)
+    (findf (lambda (thing) (equal? (send thing get-name) 'broom)) (send whom get-things))
+)
+
+
 ;;--------------------
 ;; place
 ;;
@@ -511,7 +529,23 @@
                 (send global-clock remove-callback this 'move-and-take-stuff)
                 (send this say '("SHREEEEK!  I, uh, suddenly feel very faint..."))
                 (super die perp)))
-        (define/public (move-somewhere) (let ((exit (random-exit (get-location)))) (when (not (null? exit)) (send this go-exit exit))))
+        (define/public (move-somewhere) 
+            (if (have-broom? this)
+                (let ((new-location (pick-random (filter (lambda (room) (not (eq? heaven room))) all-rooms))))
+                    (begin 
+                        (send this say (list "Lets fly"))
+                        (send screen tell-room (send this get-location) (list (send this get-name) "moves from" (send (send this get-location) get-name) "to" (send new-location get-name))) 
+                        (send this change-location new-location) 
+                        (send this enter-room)
+                    )
+                )
+                (let ((exit (random-exit (get-location)))) 
+                    (when (not (null? exit)) 
+                        (send this go-exit exit)
+                    )
+                )
+            )
+        )
         (define/public (take-something) (let* ((stuff-in-room (send this stuff-around))
                                         (other-peoples-stuff (send this peek-around))
                                         (pick-from (append stuff-in-room other-peoples-stuff)))
@@ -524,7 +558,7 @@
 ;;
 (define chosen-one%
     (class autonomous-person%
-        (init name birthplace activity miserly)
+        (init name birthplace location activity miserly)
         (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go get-spells learn-spell cast fight-back)
         (define/override (suffer hits perp spell) (begin
             (begin 
@@ -696,12 +730,33 @@
             (send screen tell-world (if (not (null? exits)) (append '("The exits are in directions:") (names-of exits))
                                                                     ;; heaven is only place with no exits
                                                                     '("There are no exits... you are dead and gone to heaven!")))
-	  'OK))
-  	  
-	  (define/override (go direction) (let ((success? (super go direction))) (begin (when success? (send global-clock tick)) success?)))
-	  (define/override (die perp) (begin (send this say (list "I am slain!")) (super die perp)))
-      (super-new (name name) (birthplace birthplace))
-     ))  
+        'OK))
+        
+        (define/override (go direction) (let ((success? (super go direction))) (begin (when success? (send global-clock tick)) success?)))
+        (define/override (die perp) (begin (send this say (list "I am slain!")) (super die perp)))
+        (define/public (fly location)
+            (cond 
+                ((not (have-broom? this))
+                    (send this say (list "I wish to fly, but I have no broom..."))
+                )
+                ((eq? (send this get-location) heaven)
+                    (send this say (list "Unfortunately, there is no escape from heaven"))
+                )
+                ((eq? location heaven)
+                    (send this say (list "There is only one way to get to heaven and you would not like it"))
+                )
+                (else
+                    (send this say (list "Lets fly!"))
+                    (send screen tell-room (send this get-location) (list (send this get-name) "moves from" (send (send this get-location) get-name) "to" (send location get-name))) 
+                    (send this change-location location) 
+                    (send this enter-room)
+                    (send global-clock tick)
+                )
+            )
+        )
+        (super-new (name name) (birthplace birthplace))
+    )
+)  
 
 
 ;;;========================================================================
@@ -858,6 +913,9 @@
 (define (get-spell-by-name name)
   (findf (lambda (spell) (equal? (send spell get-name) name)) (send chamber-of-stata get-things)))
 
+(define (get-place-by-name name)
+  (findf (lambda (place) (equal? (send place get-name) name)) all-rooms))
+
 (define (populate-spells rooms)
   (for-each (lambda (room)
 	      (clone-spell (pick-random (send chamber-of-stata get-things)) room))
@@ -936,3 +994,8 @@
 (new dementor% (name 'scary-dementor) (birthplace (send me get-location)) (activity (random-number 3)) (miserly (random-number 3)) (speed 5))
 (send me cast (thing-named 'bombarda-maxima) (thing-named 'scary-dementor))
 (send me cast (thing-named 'patronus) (thing-named 'scary-dementor))
+
+;task5
+
+;task6
+(send me fly (get-place-by-name 'barker-library))
