@@ -332,29 +332,28 @@
 ;; a plethora of messages, including 'SAY to say something.
 ;;
 (define person%
-   (class mobile-thing%
-      (init name)
-      (init-field birthplace)
-      (field (container-part (new container%)) (health 3) (max-health 3) (strength 1))
-      (inherit get-name set-name! get-location change-location leave-room destroy creation-site)
-      (define/public (get-things) (send container-part get-things))
-      (define/public (have-thing? thing) (send container-part have-thing? thing))
-      (define/public (add-thing! thing) (send container-part add-thing! thing))      
-      (define/public (del-thing! thing) (send container-part del-thing! thing))
-      (define/public (get-health) health)
-      (define/public (set-health! points) (set! health points))
-      (define/public (get-max-health) max-health)
-      (define/public (get-strength) strength)
-      (define/public (say stuff) (send screen tell-room (get-location) (append (list "At" (send (get-location) get-name) (get-name) "says --") stuff)))
-	  (define/public (have-fit) (send this say '("Yaaaah! I am upset!")))
-      (define/public (people-around)        ; other people in room...
-                     (remove this (find-all (get-location) person%)))
-        
-      (define/public (stuff-around)         ; stuff (non people) in room...
-                     (filter (lambda (x) (not (is-a? x person%))) (send (get-location) get-things)))
-        
-      (define/public (peek-around)          ; other people's stuff...
-		             (foldr append '() (map (lambda (p) (send p get-things)) (send this people-around))))
+    (class mobile-thing%
+        (init name)
+        (init-field birthplace)
+        (field (container-part (new container%)) (health 3) (max-health 3) (strength 1))
+        (inherit get-name set-name! get-location change-location leave-room destroy creation-site)
+        (define/public (get-things) (send container-part get-things))
+        (define/public (have-thing? thing) (send container-part have-thing? thing))
+        (define/public (add-thing! thing) (send container-part add-thing! thing))      
+        (define/public (del-thing! thing) (send container-part del-thing! thing))
+        (define/public (get-health) health)
+        (define/public (get-max-health) max-health)
+        (define/public (get-strength) strength)
+        (define/public (say stuff) (send screen tell-room (get-location) (append (list "At" (send (get-location) get-name) (get-name) "says --") stuff)))
+        (define/public (have-fit) (send this say '("Yaaaah! I am upset!")))
+        (define/public (people-around)        ; other people in room...
+                        (remove this (find-all (get-location) person%)))
+            
+        (define/public (stuff-around)         ; stuff (non people) in room...
+                        (filter (lambda (x) (not (is-a? x person%))) (send (get-location) get-things)))
+            
+        (define/public (peek-around)          ; other people's stuff...
+                        (foldr append '() (map (lambda (p) (send p get-things)) (send this people-around))))
      
         (define/public (take thing)
             (cond 
@@ -521,6 +520,33 @@
      ))	  
 
 ;;
+;; chosen-one
+;;
+(define chosen-one%
+    (class autonomous-person%
+        (init name birthplace activity miserly)
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go get-spells learn-spell cast fight-back)
+        (define/override (suffer hits perp spell) (begin
+            (begin 
+                (if (<= (- (get-field health this) hits) 0) 
+                    (begin
+                        (send this say (list "You will regret your decision"))
+                        (send perp die this)
+                    )
+                    (begin
+                        (send this say (list "Ouch!" hits "hits is more than I want!")) 
+                        (set-field! health this (- (get-field health this) hits)) 
+                        (when (and (is-a? perp troll%) (> hits 0)) (fight-back perp))
+                    )
+                )
+                (get-field health this)
+            )
+        ))	   
+        (super-new (name name) (birthplace birthplace) (activity activity) (miserly miserly))
+    )
+)
+
+;;
 ;; hall-monitor
 ;;
 (define hall-monitor% 
@@ -588,13 +614,13 @@
         (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go)
         (define/override (suffer hits perp spell) 
             (if (eq? spell 'patronus)
-                (let ((health (send this get-health))) 
+                (begin
                     (send this say (list "NoOOOoO! I took" hits "hits from you")) 
-                    (send this set-health! (- health hits)) 
-                    (when (<= health 0) 
+                    (set-field! health this (- (get-field health this) hits)) 
+                    (when (<= (get-field health this) 0) 
                         (send this die perp)
                     )
-                    (send this get-health)
+                    (get-field health this)
                 )
                 (send this say (list "D'you think you can damage me??")) 
             )
@@ -868,7 +894,7 @@
     (populate-spells rooms)
     (populate-players rooms)
     ;uncomment after writing chosen one
-;    (let ((r (pick-random rooms))) (new chosen-one% (name 'hairy-cdr) (birthplace r) (location r) (activity (random-number 3)) (miserly (random-number 3))))
+   (let ((r (pick-random rooms))) (new chosen-one% (name 'hairy-cdr) (birthplace r) (location r) (activity (random-number 3)) (miserly (random-number 3))))
     (set! me (let ((r (pick-random rooms))) (new avatar% (name name) (birthplace r))))
     (send screen set-me! me)
     (set! all-rooms (cons heaven rooms))
