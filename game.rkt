@@ -255,7 +255,7 @@
 
 (define mobile-thing%
    (class thing%
-          (init name origin)
+      (init name origin)
 	  (field (location origin))
 	  (inherit get-name set-name! install destroy emit)
 	  (define/override (get-location) location)
@@ -297,10 +297,10 @@
 
 (define exit%
    (class named-object%
-          (init direction)
-          (init-field from to)
+      (init direction)
+      (init-field from to)
 	  (inherit get-name set-name!)
-          (define/public (get-direction) (get-name))
+      (define/public (get-direction) (get-name))
 	  (define/public (get-from) from)
 	  (define/public (get-to) to)
 	  (define/public (install) 	(when (not (null? from)) (send from add-exit! this)))
@@ -335,13 +335,14 @@
    (class mobile-thing%
       (init name)
       (init-field birthplace)
-      (field (container-part (new container%)) (health 3) (strength 1))
+      (field (container-part (new container%)) (health 3) (max-health 3) (strength 1))
       (inherit get-name set-name! get-location change-location leave-room destroy creation-site)
       (define/public (get-things) (send container-part get-things))
       (define/public (have-thing? thing) (send container-part have-thing? thing))
       (define/public (add-thing! thing) (send container-part add-thing! thing))      
       (define/public (del-thing! thing) (send container-part del-thing! thing))
       (define/public (get-health) health)
+      (define/public (get-max-health) max-health)
       (define/public (get-strength) strength)
       (define/public (say stuff) (send screen tell-room (get-location) (append (list "At" (send (get-location) get-name) (get-name) "says --") stuff)))
 	  (define/public (have-fit) (send this say '("Yaaaah! I am upset!")))
@@ -354,23 +355,71 @@
       (define/public (peek-around)          ; other people's stuff...
 		             (foldr append '() (map (lambda (p) (send p get-things)) (send this people-around))))
      
-      (define/public (take thing)
-	                 (cond ((send this have-thing? thing)  ; already have it
-	                        (send this say (list "I am already carrying" (send thing get-name))) #f)
-	                       ((or (is-a? thing person%)
-		                        (not (is-a? thing mobile-thing%)))
-	                        (send this say (list "I try but cannot take" (send thing get-name))) #f)
-	                       (else (let ((owner (send thing get-location)))
-		                              (begin (send this say (list "I take" (send thing get-name) "from" (send owner get-name)))
-		                                     (if (is-a? owner person%) (send owner lose thing this) (send thing change-location this))
-		                                     thing)))))
+        (define/public (take thing)
+            (cond 
+                (
+                    (send this have-thing? thing)  ; already have it
+                    (send this say (list "I am already carrying" (send thing get-name))) 
+                    #f
+                )
+                ((or (is-a? thing person%) (not (is-a? thing mobile-thing%)))
+                    (send this say (list "I try but cannot take" (send thing get-name))) #f
+                )
+                (else (let ((owner (send thing get-location)))
+                    (if (and (is-a? thing spell%) (is-a? owner person%))    ; cannot take spells from others
+                        (begin 
+                            (send this say (list "Ughh, I cannot take spell" (send thing get-name) "from" (send owner get-name)))
+                            #f
+                        )
+                        (begin 
+                            (send this say (list "I take" (send thing get-name) "from" (send owner get-name)))
+                            (if (is-a? owner person%) (send owner lose thing this) (send thing change-location this))
+                            thing
+                        )
+                    )
+                    )
+                )
+            )
+        )
+
+        (define/public (learn-spell spell professor)
+            (cond 
+                ((not (is-a? professor professor%))
+                    (send this say (list "This man" (send professor get-name) "cannot teeach me a spell")) 
+                    #f
+                )
+                ((send this have-thing? spell)  ; already have it
+                    (send this say (list "I already know" (send spell get-name))) 
+                    #f
+                )
+                ((not (is-a? spell spell%))
+                    (send this say (list "Not a spell it is" (send spell get-name))) #f
+                )
+                (else
+                    (begin 
+                        (when (send professor teach-spell spell this)
+                            (send this say (list "Incredible, now I have learned" (send spell get-name) "spell from" (send professor get-name)))
+                        )
+                        (send spell get-name)
+                    )
+                )
+            )
+        )
         
-      (define/public (lose thing lose-to) (begin (send this say (list "I lose" (send thing get-name)))
-	                                             (send this have-fit)
-	                                             (send thing change-location lose-to)))
+      (define/public (lose thing lose-to) 
+        (if (is-a? thing spell%) 
+                (send this say (list "I cannot lose my spells"))
+                (begin (send this say (list "I lose" (send thing get-name)))
+                                                            (send this have-fit)
+                                                            (send thing change-location lose-to))))
         
-      (define/public (drop thing) (begin (send this say (list "I drop" (send thing get-name) "at" (send (get-location) get-name)))
-	                                     (send thing change-location (get-location))))
+        (define/public (drop thing) 
+            (if (is-a? thing spell%) 
+                (send this say (list "I cannot drop my spells"))
+                (begin (send this say (list "I drop" (send thing get-name) "at" (send (get-location) get-name)))
+                                            (send thing change-location (get-location)))
+            )
+        )
       
       (define/public (go-exit exit)	(send exit use this))
         
@@ -380,6 +429,15 @@
 		                      #f))))
       (define/public (suffer hits perp) (send this say (list "Ouch!" hits "hits is more than I want!")) (begin (set! health (- health hits)) (when (<= health 0) (send this die perp)) health))
         
+        (define/public (heal points)
+                (send this say (list "Yeaaahh I lived!!"))
+                (begin 
+                    (set! health (+ health points)) 
+                    (when (> health max-health) (set! health max-health))
+                    health
+                )
+        )
+
       (define/public (die perp)         ; depends on global variable heaven -- special place for dead person
 	                     (begin (for-each (lambda (item) (send this lose item (get-location))) (send this get-things))
 	                            (send screen tell-world '("An earth-shattering, soul-piercing scream is heard..."))
@@ -401,7 +459,7 @@
    (class person%
       (init name birthplace)
       (init-field activity miserly)
-      (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer)
+      (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer learn-spell)
       (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'move-and-take-stuff) (obj this) (message (lambda () (send this move-and-take-stuff)))))))
       (define/public (move-and-take-stuff)
 	      (begin ;; first move
@@ -430,11 +488,11 @@
    (class autonomous-person%
      (init name birthplace activity miserly)
      (init-field speed (irritability 10))
-     (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer)
+     (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer learn-spell)
      (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'irritate-students) (obj this) (message (lambda () (send this irritate-students)))))))
      (define/public (irritate-students)
          (if (= (random irritability) 0)
-	     (let ((people (send this people-around)))
+	     (let ((people (filter (lambda (person) (not (is-a? person professor%))) (send this people-around))))        ; cannot irrtate a professor
 	      (if (not (null? people))
 		  (begin
 		    (send this say '("What are you doing still up?" "Everyone back to their rooms!"))
@@ -459,7 +517,7 @@
    (class autonomous-person%
       (init name birthplace activity miserly)
       (init-field speed (hunger 3))
-	  (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer)
+	  (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer learn-spell)
 	  (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'eat-people) (obj this) (message (lambda () (send this eat-people)))))))
       (define/public (eat-people)
         (if (= (random hunger) 0)
@@ -497,27 +555,56 @@
 (define (clone-spell spell newloc)
   (new spell% (name (send spell get-name)) (origin newloc) (incant (send spell get-incant)) (action (send spell get-action))))
 
+
+;;
+;; professor
+;;
+(define professor% 
+    (class autonomous-person%
+        (init name birthplace activity miserly)
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go learn-spell)
+        (define/public (teach-spell spell target)  ; teach a person in the same room as a professor a new spell
+            (cond 
+                ((not (is-a? target person%)) (send this say (list "It is not possible to teach this lifeless thing" (send target get-name))) #f)
+                ((or (not (is-a? spell spell%)) (not (send this have-thing? spell))) (send this say (list "Unfortunately, i lack mastery to give you the knowledge about" (send spell get-name) "spell.")) #f)
+                (else (begin
+                    (send this say (list "I teach" (send target get-name) "a" (send spell get-name) "spell"))
+                    (send target add-thing! (clone-spell spell target))
+                ))
+            )
+        )
+        (define/override (suffer hits perp)
+            (send this say (list "Oh no," (send perp get-name) ", you cannot hurt me!"))
+        )
+        (super-new (name name) (birthplace birthplace) (activity activity) (miserly miserly))
+        (send this add-thing! (clone-spell (get-spell-by-name 'reparifors) this))
+        (send this add-thing! (clone-spell (get-spell-by-name 'vulnera-sanentur) this))
+        (send this add-thing! (clone-spell (get-spell-by-name 'episkey) this))
+    )
+)
+   
+
 ;;--------------------
 ;; avatar
 ;;
 ;; The avatar of the user is also a person.
 (define avatar%
    (class person%
-      (init name birthplace)
-      (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit suffer)
-      (define/public (look-around) ; report on world around you
-	   (let* ((place (get-location))
-	       (exits (send place get-exits))
-	       (other-people (send this people-around))
-	       (my-stuff (send this get-things))
-	       (stuff (send this stuff-around)))
-	  (send screen tell-world (list "You are in" (send place get-name)))
-	  (send screen tell-world (if (null? my-stuff) '("You are not holding anything.") (append '("You are holding:") (names-of my-stuff))))
-	  (send screen tell-world (if (null? stuff) '("There is no stuff in the room.") (append '("You see stuff in the room:") (names-of stuff))))
-	  (send screen tell-world (if (null? other-people) '("There are no other people around you.") (append '("You see other people:") (names-of other-people))))
-	  (send screen tell-world (if (not (null? exits)) (append '("The exits are in directions:") (names-of exits))
-		                                                    ;; heaven is only place with no exits
-		                                                    '("There are no exits... you are dead and gone to heaven!")))
+        (init name birthplace)
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit suffer)
+        (define/public (look-around) ; report on world around you
+        (let* ((place (get-location))
+            (exits (send place get-exits))
+            (other-people (send this people-around))
+            (my-stuff (send this get-things))
+            (stuff (send this stuff-around)))
+            (send screen tell-world (list "You are in" (send place get-name)))
+            (send screen tell-world (if (null? my-stuff) '("You are not holding anything.") (append '("You are holding:") (names-of my-stuff))))
+            (send screen tell-world (if (null? stuff) '("There is no stuff in the room.") (append '("You see stuff in the room:") (names-of stuff))))
+            (send screen tell-world (if (null? other-people) '("There are no other people around you.") (append '("You see other people:") (names-of other-people))))
+            (send screen tell-world (if (not (null? exits)) (append '("The exits are in directions:") (names-of exits))
+                                                                    ;; heaven is only place with no exits
+                                                                    '("There are no exits... you are dead and gone to heaven!")))
 	  'OK))
   	  
 	  (define/override (go direction) (let ((success? (super go direction))) (begin (when success? (send global-clock tick)) success?)))
@@ -615,7 +702,31 @@
        (send target emit (list (send target get-name) "grows boils on their nose")))))
     (new spell% (name 'slug-spell) (origin chamber) (incant "dagnabbit ekaterin") (action (lambda (caster target)
        (send target emit (list "A slug comes out of" (send target get-name) "'s mouth.")) (new mobile-thing% (name 'slug) (origin (send target get-location))))))
-    chamber))
+    
+    (new spell% (name 'reparifors) (origin chamber) (incant "reparifors") (action 
+        (lambda (caster target) 
+            (send target heal 1)
+            (send target emit (list (send target get-name) " got patched up a bit.")) 
+        )
+    ))
+    (new spell% (name 'vulnera-sanentur) (origin chamber) (incant "vulnera-sanentur, vulnera-sanentur, vulnera-sanentur!!") (action 
+        (lambda (caster target) 
+            (send target heal (send target get-max-health))
+            (send target emit (list (send target get-name) " is as good as new!")) 
+        )
+    ))
+    (new spell% (name 'episkey) (origin chamber) (incant "episkey") (action 
+        (lambda (caster target) 
+            (send target heal 2)
+            (send target emit (list (send target get-name) " feels so much better now.")) 
+        )
+    ))
+    
+    chamber)
+)
+
+(define (get-spell-by-name name)
+  (findf (lambda (spell) (equal? (send spell get-name) name)) (send chamber-of-stata get-things)))
 
 (define (populate-spells rooms)
   (for-each (lambda (room)
@@ -627,9 +738,9 @@
 			  (new autonomous-person% (name name) (birthplace r) (activity (random-number 3)) (miserly (random-number 3)))))
 			'(ben-bitdiddle alyssa-hacker course-6-frosh lambda-man)))
 ;uncomment after writing professors
-;	 (profs (map (lambda (name) (let ((r (pick-random rooms)))
-;			  (new professor% (name name) (birthplace r) (activity (random-number 3)) (miserly (random-number 3)))))
-;		     '(susan-hockfield eric-grimson)))
+	 (profs (map (lambda (name) (let ((r (pick-random rooms)))
+			  (new professor% (name name) (birthplace r) (activity (random-number 3)) (miserly (random-number 3)))))
+		     '(susan-hockfield eric-grimson)))
 	 (monitors (map (lambda (name) (let ((r (pick-random rooms)))
 			  (new hall-monitor% (name name) (birthplace r) (activity (random-number 3)) (miserly (random-number 3)) (speed (random-number 3)))))
 			'(dr-evil mr-bigglesworth)))
@@ -638,7 +749,7 @@
 		      '(grendel registrar))))
 
     (append students
-;	    profs        ;uncomment after writing professor
+	    profs        ;uncomment after writing professor
 	    monitors trolls)))
 
 (define me 'will-be-set-by-setup)
@@ -661,15 +772,19 @@
 
 ;; Some useful example expressions...
 
-; (setup 'ben-bitdiddle)
-; (run-clock 5)
-; (send screen deity-mode #f)
-; (send screen deity-mode #t)
-; (send me look-around)
-; (send me take (thing-named 'engineering-book))
+(setup 'ben-bitdiddle)
+(run-clock 1)
+(send screen set-deity-mode #f)
+; (send screen set-deity-mode #t)
+(send me look-around)
+; (send me take (thing-named 'slug-spell))
 ; (send me go 'up)
 ; (send me go 'down)
 ; (send me go 'north)
 ; (send me go 'south)
 ; (send me go 'west)
 ; (send me go 'east)
+
+; task 2
+(new professor% (name 'severus-snape) (birthplace (send me get-location)) (activity (random-number 3)) (miserly (random-number 3)))
+(send me learn-spell (thing-named 'reparifors) (thing-named 'severus-snape))
