@@ -342,6 +342,7 @@
       (define/public (add-thing! thing) (send container-part add-thing! thing))      
       (define/public (del-thing! thing) (send container-part del-thing! thing))
       (define/public (get-health) health)
+      (define/public (set-health! points) (set! health points))
       (define/public (get-max-health) max-health)
       (define/public (get-strength) strength)
       (define/public (say stuff) (send screen tell-room (get-location) (append (list "At" (send (get-location) get-name) (get-name) "says --") stuff)))
@@ -382,6 +383,10 @@
             )
         )
 
+        (define/public (get-spells)
+            (filter (lambda (thing) (is-a? thing spell%)) (send this get-things))
+        )
+        
         (define/public (learn-spell spell professor)
             (cond 
                 ((not (is-a? professor professor%))
@@ -408,18 +413,30 @@
 
         (define/public (cast spell target)
             (if (not (and (send this have-thing? spell) (is-a? spell spell%)))
-                (send this say (list "I dont know what spell" (send spell get-name) "is"))
+                (send this say (list "I dont know what" (send spell get-name) "is"))
                 (begin
                     (send this say (list (send spell get-incant)))
                     (send spell use this target)
                 )
             )
         )
-        
-      (define/public (lose thing lose-to) 
-        (if (is-a? thing spell%) 
-                (send this say (list "I cannot lose my spells"))
-                (begin (send this say (list "I lose" (send thing get-name)))
+
+        (define/public (fight-back target)
+            (let ((spells-to-fight (filter (lambda (spell) (member (send spell get-name) damaging-spells-names)) (send this get-spells))))
+                (if (or (null? spells-to-fight) (is-a? target dementor%))
+                    (send this say (list "RUUUUN!"))
+                    (begin
+                        (send this say (list "Take this back you bastard!"))
+                        (send this cast (pick-random spells-to-fight) target)
+                    )
+                )
+            )
+        )
+
+        (define/public (lose thing lose-to) 
+            (if (is-a? thing spell%) 
+                    (send this say (list "I cannot lose my spells"))
+                    (begin (send this say (list "I lose" (send thing get-name)))
                                                             (send this have-fit)
                                                             (send thing change-location lose-to))))
         
@@ -431,13 +448,24 @@
             )
         )
       
-      (define/public (go-exit exit)	(send exit use this))
+        (define/public (go-exit exit)	(send exit use this))
+            
+        (define/public (go direction) ; symbol -> boolean
+                            (let ((exit (send (get-location) exit-towards direction)))
+                                (if (and exit (is-a? exit exit%)) (send this go-exit exit) (begin (send screen tell-room (get-location) (list "No exit in" direction "direction"))
+                                #f))))
         
-      (define/public (go direction) ; symbol -> boolean
-	                     (let ((exit (send (get-location) exit-towards direction)))
-	                           (if (and exit (is-a? exit exit%)) (send this go-exit exit) (begin (send screen tell-room (get-location) (list "No exit in" direction "direction"))
-		                      #f))))
-      (define/public (suffer hits perp) (send this say (list "Ouch!" hits "hits is more than I want!")) (begin (set! health (- health hits)) (when (<= health 0) (send this die perp)) health))
+        (define/public (suffer hits perp spell)
+            (send this say (list "Ouch!" hits "hits is more than I want!")) 
+            (begin 
+                (set! health (- health hits)) 
+                (if (<= health 0) 
+                    (send this die perp)
+                    (when (and (is-a? perp troll%) (> hits 0)) (fight-back perp))
+                ) 
+                health
+            )
+        )
         
         (define/public (heal points)
                 (send this say (list "Yeaaahh I lived!!"))
@@ -448,16 +476,17 @@
                 )
         )
 
-      (define/public (die perp)         ; depends on global variable heaven -- special place for dead person
-	                     (begin (for-each (lambda (item) (send this lose item (get-location))) (send this get-things))
-	                            (send screen tell-world '("An earth-shattering, soul-piercing scream is heard..."))
-				    (send this change-location heaven)
-	                            (send this destroy)
-				    (send this enter-room)))
-      
-      (define/override (enter-room) (let ((others (send this people-around))) (begin (when (not (null? others)) (send this say (cons "Hi" (names-of others)))) #t)))
-      (super-new (name name) (origin birthplace))
-     ))
+        (define/public (die perp)         ; depends on global variable heaven -- special place for dead person
+            (begin (for-each (lambda (item) (send this lose item (get-location))) (send this get-things))
+                (send screen tell-world '("An earth-shattering, soul-piercing scream is heard..."))
+                (send this change-location heaven)
+                (send this destroy)
+                (send this enter-room)))
+        
+        (define/override (enter-room) (let ((others (send this people-around))) (begin (when (not (null? others)) (send this say (cons "Hi" (names-of others)))) #t)))
+        (super-new (name name) (origin birthplace))
+    )
+)
 
 
 ;;--------------------
@@ -466,28 +495,28 @@
 ;; activity determines maximum movement
 ;; miserly determines chance of picking stuff up
 (define autonomous-person%
-   (class person%
-      (init name birthplace)
-      (init-field activity miserly)
-      (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer learn-spell cast)
-      (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'move-and-take-stuff) (obj this) (message (lambda () (send this move-and-take-stuff)))))))
-      (define/public (move-and-take-stuff)
-	      (begin ;; first move
-	          (let loop ((moves (random-number activity)))
-	               (if (= moves 0) 'done-moving
-	                   (begin (move-somewhere) (loop (sub1 moves)))))
-	             ;; then take stuff
-	          (when (= (random miserly) 0) (take-something))
-	          'done-for-this-tick))
-      (define/override (die perp) (begin
-              (send global-clock remove-callback this 'move-and-take-stuff)
-              (send this say '("SHREEEEK!  I, uh, suddenly feel very faint..."))
-              (super die perp)))
-      (define/public (move-somewhere) (let ((exit (random-exit (get-location)))) (when (not (null? exit)) (send this go-exit exit))))
-      (define/public (take-something) (let* ((stuff-in-room (send this stuff-around))
-	                                     (other-peoples-stuff (send this peek-around))
-	                                     (pick-from (append stuff-in-room other-peoples-stuff)))
-	                                     (if (not (null? pick-from)) (send this take (pick-random pick-from)) #f)))	  
+    (class person%
+        (init name birthplace)
+        (init-field activity miserly)
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer get-spells learn-spell cast fight-back)
+        (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'move-and-take-stuff) (obj this) (message (lambda () (send this move-and-take-stuff)))))))
+        (define/public (move-and-take-stuff)
+            (begin ;; first move
+                (let loop ((moves (random-number activity)))
+                    (if (= moves 0) 'done-moving
+                        (begin (move-somewhere) (loop (sub1 moves)))))
+                    ;; then take stuff
+                (when (= (random miserly) 0) (take-something))
+                'done-for-this-tick))
+        (define/override (die perp) (begin
+                (send global-clock remove-callback this 'move-and-take-stuff)
+                (send this say '("SHREEEEK!  I, uh, suddenly feel very faint..."))
+                (super die perp)))
+        (define/public (move-somewhere) (let ((exit (random-exit (get-location)))) (when (not (null? exit)) (send this go-exit exit))))
+        (define/public (take-something) (let* ((stuff-in-room (send this stuff-around))
+                                        (other-peoples-stuff (send this peek-around))
+                                        (pick-from (append stuff-in-room other-peoples-stuff)))
+                                        (if (not (null? pick-from)) (send this take (pick-random pick-from)) #f)))	      
       (super-new (name name) (birthplace birthplace))
      ))	  
 
@@ -498,7 +527,7 @@
    (class autonomous-person%
      (init name birthplace activity miserly)
      (init-field speed (irritability 10))
-     (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer learn-spell cast)
+     (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer get-spells learn-spell cast fight-back)
      (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'irritate-students) (obj this) (message (lambda () (send this irritate-students)))))))
      (define/public (irritate-students)
          (if (= (random irritability) 0)
@@ -525,31 +554,54 @@
 ;;
 (define troll% 
    (class autonomous-person%
-      (init name birthplace activity miserly)
-      (init-field speed (hunger 3))
-	  (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer learn-spell cast)
-	  (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'eat-people) (obj this) (message (lambda () (send this eat-people)))))))
-      (define/public (eat-people)
-        (if (= (random hunger) 0)
-	     (let ((people (send this people-around)))
-	      (if (not (null? people))
-        (let ((victim (pick-random people)))
-		    (send this emit
-			 (list (send this get-name) "takes a bite out of"
-			       (send victim get-name)))
-		    (send victim suffer (random-number 3) this)
-            (send victim emit (list "Take this back you troll!"))
-            (send this suffer (random-number 3) victim)
-		    'tasty
-        )
-		  (send this emit
-		       (list (send this get-name) "'s belly rumbles"))))
-	    'not-hungry-now))
-	  (define/override (die perp) (begin
+        (init name birthplace activity miserly)
+        (init-field speed (hunger 3))
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go suffer)
+        (define/override (install) (begin (super install) (send global-clock add-callback (new callback% (name 'eat-people) (obj this) (message (lambda () (send this eat-people)))))))
+        (define/public (eat-people)
+            (if (= (random hunger) 0)
+            (let ((people (send this people-around)))
+            (if (not (null? people))
+                (let ((victim (pick-random people)))
+                    (send this emit
+                    (list (send this get-name) "takes a bite out of"
+                        (send victim get-name)))
+                    (send victim suffer (random-number 3) this "")
+                    'tasty
+                )
+                (send this emit
+                    (list (send this get-name) "'s belly rumbles"))))
+                'not-hungry-now))
+	    (define/override (die perp) (begin
               (send global-clock remove-callback this 'eat-people)
               (super die perp)))		   
-     (super-new (name name) (birthplace birthplace) (activity activity) (miserly miserly))
-    ))
+        (super-new (name name) (birthplace birthplace) (activity activity) (miserly miserly))
+))
+
+
+;;
+;; dementor
+;;
+(define dementor%
+    (class troll%
+        (init name birthplace activity miserly)	  
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go)
+        (define/override (suffer hits perp spell) 
+            (if (eq? spell 'patronus)
+                (let ((health (send this get-health))) 
+                    (send this say (list "NoOOOoO! I took" hits "hits from you")) 
+                    (send this set-health! (- health hits)) 
+                    (when (<= health 0) 
+                        (send this die perp)
+                    )
+                    (send this get-health)
+                )
+                (send this say (list "D'you think you can damage me??")) 
+            )
+        )
+        (super-new (name name) (birthplace birthplace) (activity activity) (miserly miserly))
+    )
+)
    
 ;;
 ;; spell
@@ -575,7 +627,7 @@
 (define professor% 
     (class autonomous-person%
         (init name birthplace activity miserly)
-        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go learn-spell cast)
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit go get-spells learn-spell cast)
         (define/public (teach-spell spell target)  ; teach a person in the same room as a professor a new spell
             (cond 
                 ((not (is-a? target person%)) (send this say (list "It is not possible to teach this lifeless thing" (send target get-name))) #f)
@@ -586,7 +638,7 @@
                 ))
             )
         )
-        (define/override (suffer hits perp)
+        (define/override (suffer hits perp spell)
             (send this say (list "Oh no," (send perp get-name) ", you cannot hurt me!"))
         )
         (super-new (name name) (birthplace birthplace) (activity activity) (miserly miserly))
@@ -604,7 +656,7 @@
 (define avatar%
    (class person%
         (init name birthplace)
-        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit suffer learn-spell cast)
+        (inherit get-name set-name! get-location change-location enter-room leave-room destroy creation-site get-things have-thing? add-thing! del-thing! get-health get-strength say have-fit people-around stuff-around peek-around take lose drop go-exit suffer get-spells learn-spell cast fight-back)
         (define/public (look-around) ; report on world around you
         (let* ((place (get-location))
             (exits (send place get-exits))
@@ -737,19 +789,19 @@
     (new spell% (name 'cruciatus) (origin chamber) (incant "crusio") (action 
         (lambda (caster target) 
             (send caster emit (list (send caster get-name) "uses crucio on" (send target get-name)))
-            (send target suffer 1 caster)
+            (send target suffer 1 caster 'cruciatus)
         )
     ))
     (new spell% (name 'patronus) (origin chamber) (incant "expecto patronum") (action 
         (lambda (caster target) 
             (send caster emit (list (send caster get-name) "uses patronum on" (send target get-name)))
-            (send target suffer 2 caster)
+            (send target suffer 2 caster 'patronus)
         )
     ))
     ; (new spell% (name 'sectumsempra) (origin chamber) (incant "sectumsempra") (action 
     ;     (lambda (caster target) 
     ;         (send caster emit (list (send caster get-name) "uses sectumsempra on" (send target get-name)))
-    ;         (send target suffer 1)
+    ;         (send target suffer 1 'sectumsempra)
     ;         (send global-clock add-callback (new callback% (name 'bleeding) (obj )))
     ;     )
     ; ))
@@ -759,7 +811,7 @@
             (for-each 
                 (lambda (person)
                     (when (or (is-a? person troll%) (is-a? person hall-monitor%))
-                        (send person suffer (random-number 2) caster)
+                        (send person suffer (random-number 2) caster 'bombarda-maxima)
                     )
                 )
                 (send caster people-around)
@@ -767,6 +819,14 @@
         )
     ))
     chamber)
+)
+
+(define damaging-spells-names
+    (list 'cruciatus 'patronus 'bombarda-maxima)
+)
+
+(define healing-spells-names
+    (list 'reparifors 'vulnera-sanentur 'episkey)
 )
 
 (define (get-spell-by-name name)
@@ -835,6 +895,18 @@
 
 ; task 3
 (new troll% (name 'troll-troll) (birthplace (send me get-location)) (activity (random-number 3)) (miserly (random-number 3)) (speed 5))
-(new troll% (name 'troll-troll-troll) (birthplace (send me get-location)) (activity (random-number 3)) (miserly (random-number 3)) (speed 5))
+; (new troll% (name 'troll-troll-troll) (birthplace (send me get-location)) (activity (random-number 3)) (miserly (random-number 3)) (speed 5))
 (send me add-thing! (clone-spell (get-spell-by-name 'bombarda-maxima) me))
-(send me cast (thing-named 'bombarda-maxima) (thing-named 'troll-troll))
+(send me add-thing! (clone-spell (get-spell-by-name 'patronus) me))
+
+(send me look-around)
+; (send me cast (thing-named 'bombarda-maxima) (thing-named 'troll-troll))
+
+(send (thing-named 'troll-troll) eat-people)
+
+
+
+; task4
+(new dementor% (name 'scary-dementor) (birthplace (send me get-location)) (activity (random-number 3)) (miserly (random-number 3)) (speed 5))
+(send me cast (thing-named 'bombarda-maxima) (thing-named 'scary-dementor))
+(send me cast (thing-named 'patronus) (thing-named 'scary-dementor))
